@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Profile</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body>
+    <div class="container">
+        <div class="profile-container">
+            <div class="profile-header">
+                <img src="{{if .Avatar}}{{.Avatar}}{{else}}/static/default-avatar.png{{end}}" 
+                     class="profile-image" onclick="updateProfileImage()">
+                <h1>{{.Username}}</h1>
+            </div>
+            
+            <form id="profileForm" class="profile-form">
+                <input type="text" name="displayName" placeholder="Display Name" 
+                       value="{{.DisplayName}}">
+                <textarea name="bio" placeholder="Bio">{{.Bio}}</textarea>
+                <button type="submit">Save Profile</button>
+            </form>
+            
+            <div class="profile-stats">
+                <div class="stat">
+                    <span class="stat-label">Messages</span>
+                    <span class="stat-value">{{.MessageCount}}</span>
+                </div>
+                <div class="stat">
+                    <span class="stat-label">Member since</span>
+                    <span class="stat-value">{{.JoinedAt.Format "Jan 2, 2006"}}</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+    function updateProfileImage() {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = 'image/*';
+        input.onchange = e => {
+            const file = e.target.files[0];
+            if (!file) return;
+            
+            const reader = new FileReader();
+            reader.onload = e => {
+                fetch('/api/profile', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        avatar: e.target.result
+                    })
+                }).then(() => location.reload());
+            };
+            reader.readAsDataURL(file);
+        };
+        input.click();
+    }
+
+    document.getElementById('profileForm').onsubmit = function(e) {
+        e.preventDefault();
+        const formData = new FormData(this);
+        fetch('/api/profile', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(Object.fromEntries(formData))
+        }).then(() => alert('Profile updated!'));
+    };
+    </script>
+</body>
+</html>
