@@ -125,6 +125,9 @@ func handleSendMessage(w http.ResponseWriter, r *http.Request) {
 	content := strings.TrimSpace(r.FormValue("content"))
 	isGroup := r.FormValue("is_group") == "true"
 
+	// Process content with Markdown
+	content = processMessageContent(content)
+
 	// Create message based on type
 	var err error
 	if isGroup {
@@ -175,6 +178,67 @@ func handleSendMessage(w http.ResponseWriter, r *http.Request) {
 		fmt.Sprintf("New message from %s", from))
 
 	http.Redirect(w, r, "/messages", http.StatusSeeOther)
+}
+
+func handleEditMessage(w http.ResponseWriter, r *http.Request) {
+	session, _ := store.Get(r, "session-name")
+	username, ok := session.Values["username"].(string)
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	var reqData struct {
+		MessageID  int    `json:"message_id"`
+		NewContent string `json:"content"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&reqData); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if err := editMessage(reqData.MessageID, username, reqData.NewContent); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+func handleReplyMessage(w http.ResponseWriter, r *http.Request) {
+	session, _ := store.Get(r, "session-name")
+	username, ok := session.Values["username"].(string)
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	var reqData struct {
+		ReplyTo int    `json:"reply_to"`
+		Content string `json:"content"`
+		ToUser  string `json:"to_user"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&reqData); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Process content with Markdown
+	reqData.Content = processMessageContent(reqData.Content)
+
+	messages := loadMessages()
+	newMessage := Message{
+		ID:        len(messages) + 1,
+		FromUser:  username,
+		ToUser:    reqData.ToUser,
+		Content:   reqData.Content,
+		CreatedAt: time.Now(),
+		ReplyTo:   reqData.ReplyTo,
+	}
+	if err := saveMessages(append(messages, newMessage)); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
 }
 
 func handleAPI(w http.ResponseWriter, r *http.Request) {
@@ -515,18 +579,38 @@ func handleNotifications(w http.ResponseWriter, r *http.Request) {
 
 	switch r.Method {
 	case "GET":
-		notifications := notificationService.GetUnread(username)
-		json.NewEncoder(w).Encode(notifications)
+		action := r.URL.Query().Get("action")
+		switch action {
+		case "all":
+			notifications := notificationService.GetAllByUser(username)
+			json.NewEncoder(w).Encode(notifications)
+		case "unread":
+			notifications := notificationService.GetUnread(username)
+			json.NewEncoder(w).Encode(notifications)
+		default:
+			notifications := notificationService.GetUnread(username)
+			json.NewEncoder(w).Encode(notifications)
+		}
 	case "POST":
-		var reqData struct {
-			NotificationID int `json:"notification_id"`
+		action := r.URL.Query().Get("action")
+		switch action {
+		case "mark_all_read":
+			notificationService.MarkAllRead(username)
+			w.WriteHeader(http.StatusOK)
+		case "clear_all":
+			notificationService.ClearAll(username)
+			w.WriteHeader(http.StatusOK)
+		default:
+			var reqData struct {
+				NotificationID int `json:"notification_id"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&reqData); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			notificationService.MarkRead(username, reqData.NotificationID)
+			w.WriteHeader(http.StatusOK)
 		}
-		if err := json.NewDecoder(r.Body).Decode(&reqData); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		notificationService.MarkRead(username, reqData.NotificationID)
-		w.WriteHeader(http.StatusOK)
 	}
 }
 
@@ -628,4 +712,64 @@ func handleCreateGroup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	json.NewEncoder(w).Encode(group)
+}
+
+func handleMessageReaction(w http.ResponseWriter, r *http.Request) {
+	session, _ := store.Get(r, "session-name")
+	username := session.Values["username"].(string)
+
+	var reqData struct {
+		MessageID int    `json:"message_id"`
+		Emoji     string `json:"emoji"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&reqData); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if err := addReactionToMessage(reqData.MessageID, username, reqData.Emoji); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+}
+
+func handleMessageLogs(w http.ResponseWriter, r *http.Request) {
+	session, _ := store.Get(r, "session-name")
+	// username can be used for permission check if needed
+	_, ok := session.Values["username"].(string)
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	// Получаем параметры фильтрации из query
+	action := r.URL.Query().Get("action")
+	startDate := r.URL.Query().Get("start")
+	endDate := r.URL.Query().Get("end")
+
+	// Parse dates
+	var start, end time.Time
+	if startDate != "" {
+		start, _ = time.Parse("2006-01-02", startDate)
+	}
+	if endDate != "" {
+		end, _ = time.Parse("2006-01-02", endDate)
+	}
+
+	logMutex.RLock()
+	defer logMutex.RUnlock()
+
+	var filteredLogs []MessageLog
+	for _, log := range messageLogs {
+		if (action == "" || log.Action == action) &&
+			(startDate == "" || !log.Timestamp.Before(start)) &&
+			(endDate == "" || !log.Timestamp.After(end)) {
+			filteredLogs = append(filteredLogs, log)
+		}
+	}
+
+	json.NewEncoder(w).Encode(filteredLogs)
 }

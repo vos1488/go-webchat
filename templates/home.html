@@ -1,17 +1,29 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
     <title>Home</title>
     <link rel="stylesheet" href="/static/style.css">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#ffffff">
 </head>
-<body>
-    <div class="container">
-        <h1>Welcome, {{.}}</h1>
-        <nav>
-            <a href="/messages">Messages</a> 
-            <a href="/profile">Profile</a>
-            <a href="/logout">Logout</a>
-        </nav>
+<body class="home-page">
+    <div class="responsive-wrapper">
+        <div class="container">
+            <h1>Welcome, {{.}}</h1>
+            <nav>
+                <a href="/messages">Messages</a> 
+                <a href="/profile">Profile</a>
+                <a href="/logout">Logout</a>
+            </nav>
+        </div>
+        <div class="card">
+        </div>
+        <footer class="site-footer">
+            © vos9/2025. All rights reserved.
+            <div class="cookie-consent">
+                This site uses cookies. By using it, you consent to our cookie policy.
+            </div>
+        </footer>
     </div>
 </body>
 </html>

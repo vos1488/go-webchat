@@ -48,7 +48,6 @@ func main() {
 	// Profile routes
 	r.HandleFunc("/profile", handleProfile).Methods("GET", "POST")
 	// Remove undefined handler
-	// r.HandleFunc("/api/profile", handleProfileAPI)
 
 	// Enhanced API routes with JWT middleware
 	api := r.PathPrefix("/api").Subrouter()
@@ -58,6 +57,8 @@ func main() {
 	r.HandleFunc("/api/messages", handleAPI)
 	r.HandleFunc("/api/users/online", handleAPI)
 	r.HandleFunc("/api/messages/delete", handleAPI)
+	r.HandleFunc("/api/messages/edit", handleEditMessage).Methods("POST") // Добавляем маршрут для редактирования
+	api.HandleFunc("/messages/reply", handleReplyMessage).Methods("POST") // Добавляем маршрут для ответов
 
 	// Notification routes
 	r.HandleFunc("/api/notifications", handleNotifications).Methods("GET", "POST")
@@ -68,6 +69,12 @@ func main() {
 	api.HandleFunc("/users/status", handleUserStatus).Methods("GET")
 	api.HandleFunc("/groups/create", handleCreateGroup).Methods("POST")
 	api.HandleFunc("/settings", handleSettings).Methods("GET", "POST")
+
+	// Add reaction endpoint
+	api.HandleFunc("/messages/react", handleMessageReaction).Methods("POST")
+
+	// Add message logs endpoint
+	api.HandleFunc("/messages/logs", handleMessageLogs).Methods("GET")
 
 	// Home page
 	r.HandleFunc("/", handleHome).Methods("GET")

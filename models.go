@@ -33,21 +33,28 @@ type User struct {
 	Settings UserSettings `json:"settings"`
 }
 
+type MessageReaction struct {
+	UserID    string    `json:"user_id"`
+	Emoji     string    `json:"emoji"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 type Message struct {
-	ID         int       `json:"id"`
-	FromUser   string    `json:"from_user"`
-	ToUser     string    `json:"to_user"`
-	Content    string    `json:"content"`
-	CreatedAt  time.Time `json:"created_at"`
-	IsRead     bool      `json:"is_read"`
-	IsGroup    bool      `json:"is_group"`
-	GroupUsers []string  `json:"group_users,omitempty"`
-	HasFile    bool      `json:"has_file"`
-	FileName   string    `json:"file_name,omitempty"`
-	FileData   string    `json:"file_data,omitempty"` // Base64 encoded file
-	IsEdited   bool      `json:"is_edited"`
-	EditedAt   time.Time `json:"edited_at,omitempty"`
-	ReplyTo    int       `json:"reply_to,omitempty"`
+	ID         int               `json:"id"`
+	FromUser   string            `json:"from_user"`
+	ToUser     string            `json:"to_user"`
+	Content    string            `json:"content"`
+	CreatedAt  time.Time         `json:"created_at"`
+	IsRead     bool              `json:"is_read"`
+	IsGroup    bool              `json:"is_group"`
+	GroupUsers []string          `json:"group_users,omitempty"`
+	HasFile    bool              `json:"has_file"`
+	FileName   string            `json:"file_name,omitempty"`
+	FileData   string            `json:"file_data,omitempty"` // Base64 encoded file
+	IsEdited   bool              `json:"is_edited"`
+	EditedAt   time.Time         `json:"edited_at,omitempty"`
+	ReplyTo    int               `json:"reply_to,omitempty"`
+	Reactions  []MessageReaction `json:"reactions,omitempty"`
 }
 
 type Group struct {
@@ -76,6 +83,14 @@ type Claims struct {
 	jwt.StandardClaims
 }
 
+type MessageLog struct {
+	MessageID int       `json:"message_id"`
+	Action    string    `json:"action"` // create, edit, delete, react
+	UserID    string    `json:"user_id"`
+	Timestamp time.Time `json:"timestamp"`
+	Details   string    `json:"details"`
+}
+
 var (
 	userMutex    sync.RWMutex
 	messageMutex sync.RWMutex
@@ -88,6 +103,8 @@ var (
 	messageCache = make(map[string][]Message) // кеш сообщений для каждого пользователя
 	cacheMutex   sync.RWMutex
 	cacheExpiry  = 5 * time.Minute
+	messageLogs  = make([]MessageLog, 0)
+	logMutex     sync.RWMutex
 )
 
 func init() {
@@ -170,29 +187,6 @@ func createUser(username, password string) error {
 		ID:       len(users) + 1,
 		Username: strings.TrimSpace(username),
 		Password: string(hashedPassword),
-	}
-	users = append(users, newUser)
-	return saveUsers(users)
-}
-
-func createUserWithAvatar(username, password, avatar string) error {
-	// Validate input
-	if len(username) < 3 || len(password) < 6 {
-		return errors.New("username must be at least 3 characters and password at least 6 characters")
-	}
-
-	// Hash password
-	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
-	if err != nil {
-		return err
-	}
-
-	users := loadUsers()
-	newUser := User{
-		ID:       len(users) + 1,
-		Username: strings.TrimSpace(username),
-		Password: string(hashedPassword),
-		Avatar:   avatar,
 	}
 	users = append(users, newUser)
 	return saveUsers(users)
@@ -363,16 +357,6 @@ func broadcastTypingStatus(from, to string, isTyping bool) {
 	typingUsers[from][to] = isTyping
 }
 
-func getTypingStatus(from, to string) bool {
-	typingMutex.RLock()
-	defer typingMutex.RUnlock()
-
-	if users, ok := typingUsers[from]; ok {
-		return users[to]
-	}
-	return false
-}
-
 func getMessageHistory(user1, user2 string) []Message {
 	messages := loadMessages()
 	var history []Message
@@ -397,8 +381,6 @@ func processMessageContent(content string) string {
 	emojis := map[string]string{
 		":)": "😊", ":(": "😢", ":D": "😃",
 		"<3": "❤️", ":P": "😛",
-		":thumbsup:": "👍", ":ok:": "👌",
-		":fire:": "🔥", ":star:": "⭐",
 	}
 
 	for text, emoji := range emojis {
@@ -422,22 +404,6 @@ func editMessage(messageID int, username, newContent string) error {
 		}
 	}
 	return errors.New("message not found")
-}
-
-func searchMessages(username, query string) []Message {
-	messages := loadMessages()
-	var results []Message
-	query = strings.ToLower(query)
-
-	for _, msg := range messages {
-		if msg.FromUser == username || msg.ToUser == username ||
-			(msg.IsGroup && containsUser(msg.GroupUsers, username)) {
-			if strings.Contains(strings.ToLower(msg.Content), query) {
-				results = append(results, msg)
-			}
-		}
-	}
-	return results
 }
 
 func searchMessageHistory(username, query string, startDate, endDate time.Time) []Message {
@@ -472,15 +438,6 @@ func getUserStatus(username string) UserStatus {
 	statusMutex.RLock()
 	defer statusMutex.RUnlock()
 	return userStatus[username]
-}
-
-func updateTypingTime(username string) {
-	statusMutex.Lock()
-	defer statusMutex.Unlock()
-	if status, ok := userStatus[username]; ok {
-		status.LastTyping = time.Now()
-		userStatus[username] = status
-	}
 }
 
 func validateFileUpload(fileName string, fileSize int64) error {
@@ -575,19 +532,6 @@ func exportMessageHistory(username string) ([]byte, error) {
 	return json.MarshalIndent(data, "", "    ")
 }
 
-func generateToken(username string) (string, error) {
-	expirationTime := time.Now().Add(24 * time.Hour)
-	claims := &Claims{
-		Username: username,
-		StandardClaims: jwt.StandardClaims{
-			ExpiresAt: expirationTime.Unix(),
-		},
-	}
-
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return token.SignedString(jwtKey)
-}
-
 func updateProfile(username string, profile UserProfile) error {
 	users := loadUsers()
 	for i := range users {
@@ -598,18 +542,6 @@ func updateProfile(username string, profile UserProfile) error {
 		}
 	}
 	return errors.New("user not found")
-}
-
-// Add WebSocket broadcast function
-func broadcastMessage(msg Message) {
-	clientsMutex.RLock()
-	defer clientsMutex.RUnlock()
-
-	for username, conn := range clients {
-		if msg.ToUser == username || msg.FromUser == username {
-			conn.WriteJSON(msg)
-		}
-	}
 }
 
 func getCachedMessages(username string) []Message {
@@ -658,4 +590,26 @@ func formatMessage(msg Message) Message {
 	}
 
 	return msg
+}
+
+func addReactionToMessage(messageID int, userID string, emoji string) error {
+	messages := loadMessages()
+	for i := range messages {
+		if messages[i].ID == messageID {
+			// Проверяем, не ставил ли пользователь уже такую реакцию
+			for _, reaction := range messages[i].Reactions {
+				if reaction.UserID == userID && reaction.Emoji == emoji {
+					return nil
+				}
+			}
+
+			messages[i].Reactions = append(messages[i].Reactions, MessageReaction{
+				UserID:    userID,
+				Emoji:     emoji,
+				CreatedAt: time.Now(),
+			})
+			return saveMessages(messages)
+		}
+	}
+	return errors.New("message not found")
 }

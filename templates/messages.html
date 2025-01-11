@@ -1,843 +1,886 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
     <title>Messages</title>
     <link rel="stylesheet" href="/static/style.css">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <style>
-    .drop-zone {
-        border: 2px dashed #ccc;
-        border-radius: 4px;
-        padding: 20px;
-        text-align: center;
-        background: #f8f9fa;
-        transition: all 0.3s ease;
-    }
-
-    .drop-zone.drag-over {
-        background: #e3f2fd;
-        border-color: #007bff;
-    }
-
-    .message.sent, .message.received {
-        transition: all 0.3s ease;
-        opacity: 0;
-        transform: translateX(-20px);
-    }
-
-    .message.show {
-        opacity: 1;
-        transform: translateX(0);
-    }
-
-    .markdown-help {
-        font-size: 12px;
-        color: #666;
-        margin: 5px 0;
-    }
-
-    .markdown-help-popup {
-        position: fixed;
-        top: 50%;
-        left: 50%;
-        transform: translate(-50%, -50%);
-        background: white;
-        padding: 20px;
-        border-radius: 5px;
-        box-shadow: 0 0 10px rgba(0,0,0,0.3);
-        z-index: 1000;
-    }
-
-    #preview {
-        border: 1px solid #ddd;
-        border-radius: 4px;
-        padding: 10px;
-        margin: 10px 0;
-        background: #f8f9fa;
-        min-height: 50px;
-    }
-
-    .message-video {
-        max-width: 100%;
-        max-height: 300px;
-        border-radius: 4px;
-        margin: 5px 0;
-    }
-
-    .btn-secondary {
-        background-color: #6c757d;
-        margin-left: 10px;
-    }
-
-    .btn-secondary:hover {
-        background-color: #5a6268;
-    }
-    </style>
+    <meta name="theme-color" content="#ffffff">
 </head>
 <body>
-    <div class="container">
-        <div class="sidebar">
-            <h2>Online Users</h2>
-            <div id="onlineUsers"></div>
-            <h2>Groups</h2>
-            <div id="userGroups"></div>
-            <button onclick="showNewGroupDialog()" class="btn-primary">New Group</button>
-        </div>
-
-        <div class="main-content">
-            <div class="message-header">
-                <h1>Messages</h1>
-                <div class="controls">
-                    <select id="sortMessages">
-                        <option value="newest">Newest First</option>
-                        <option value="oldest">Oldest First</option>
-                    </select>
-                    <input type="text" id="searchInput" placeholder="Search messages...">
-                </div>
-            </div>
-
-            <form method="POST" action="/send" id="messageForm" enctype="multipart/form-data">
-                <input type="hidden" name="is_group" id="isGroup" value="false">
-                <input type="text" name="to" id="recipient" placeholder="To User/Group" required>
-                <textarea name="content" placeholder="Message" required></textarea>
-                <div class="file-upload">
-                    <input type="file" name="attachment" id="attachment">
-                    <label for="attachment" class="file-label">📎 Attach File</label>
-                </div>
-                <div id="preview"></div>
-                <button type="submit">Send</button>
-            </form>
-            
-            <div id="messages" class="messages"></div>
-            <div id="typingUsers"></div>
-            <div class="message-controls">
-                <button onclick="exportMessages()" class="btn-secondary">
-                    Export Messages
-                </button>
-            </div>
-        </div>
-    </div>
-
-    <div id="groupDialog" class="modal">
-        <div class="modal-content">
-            <h2>Create New Group</h2>
-            <div id="groupUsers"></div>
-            <button onclick="createGroup()">Create Group</button>
-            <button onclick="closeGroupDialog()">Cancel</button>
-        </div>
-    </div>
-
-    <div class="settings-panel">
-        <h3>Settings</h3>
-        <label>
-            <input type="checkbox" id="soundEnabled"> Enable Sound
-        </label>
-        <label>
-            <input type="checkbox" id="notifyEnabled"> Enable Notifications
-        </label>
-        <label>
-            <input type="checkbox" id="darkTheme"> Dark Theme
-        </label>
-        <label>
-            <input type="checkbox" id="showReadStatus"> Show Read Status
-        </label>
-    </div>
-
-    <div class="search-panel">
-        <input type="date" id="startDate">
-        <input type="date" id="endDate">
-        <input type="text" id="historySearch" placeholder="Search in history...">
-        <button onclick="searchHistory()">Search</button>
-    </div>
-
-    <script>
-    let lastMessageCount = 0;
-
-    function updateMessages(query = '', order = 'newest', specificMessages = null) {
-        const messages = specificMessages || fetch(`/api/messages?q=${encodeURIComponent(query)}&order=${order}`)
-            .then(response => response.json());
-            
-        Promise.resolve(messages).then(msgs => {
-            const container = document.getElementById('messages');
-            container.innerHTML = '';
-            
-            const groupedMessages = groupMessagesByDate(msgs);
-            
-            Object.entries(groupedMessages).forEach(([date, messages]) => {
-                const dateDiv = document.createElement('div');
-                dateDiv.className = 'message-date-separator';
-                dateDiv.textContent = date;
-                container.appendChild(dateDiv);
+    <div class="responsive-wrapper">
+        <div class="container">
+            <aside class="sidebar">
+                <h2>Online Users</h2>
+                <div id="onlineUsers" class="users-list"></div>
+                <h2>Groups</h2>
+                <div id="userGroups" class="groups-list"></div>
+                <button onclick="showNewGroupDialog()" class="btn-primary">New Group</button>
                 
-                messages.forEach((msg, index) => {
-                    const isOwn = msg.from_user === '{{.CurrentUser}}';
-                    const div = document.createElement('div');
-                    div.className = `message ${isOwn ? 'sent' : 'received'}`;
-                    
-                    const header = document.createElement('div');
-                    header.className = 'message-header';
-                    header.textContent = isOwn ? `To: ${msg.to_user}` : `From: ${msg.from_user}`;
-                    
-                    const content = document.createElement('div');
-                    content.className = 'message-content';
-                    content.innerHTML = msg.content; // Changed from textContent to innerHTML
-                    
-                    // Add file attachment if present
-                    if (msg.has_file) {
-                        const fileDiv = document.createElement('div');
-                        fileDiv.className = 'message-file';
-                        const ext = msg.file_name.split('.').pop().toLowerCase();
-                        
-                        switch(true) {
-                            case /^(jpg|jpeg|png|gif)$/.test(ext):
-                                const img = document.createElement('img');
-                                img.src = `data:image;base64,${msg.file_data}`;
-                                img.className = 'message-image';
-                                fileDiv.appendChild(img);
-                                break;
-                                
-                            case /^(mp4|webm|mov)$/.test(ext):
-                                const video = document.createElement('video');
-                                video.controls = true;
-                                video.className = 'message-video';
-                                video.src = `data:video/${ext};base64,${msg.file_data}`;
-                                fileDiv.appendChild(video);
-                                break;
-                                
-                            default:
-                                const link = document.createElement('a');
-                                link.href = `data:application/octet-stream;base64,${msg.file_data}`;
-                                link.download = msg.file_name;
-                                link.textContent = `📎 ${msg.file_name}`;
-                                fileDiv.appendChild(link);
-                        }
-                        content.appendChild(fileDiv);
-                    }
-                    
-                    const time = document.createElement('div');
-                    time.className = 'message-time';
-                    time.textContent = new Date(msg.created_at).toLocaleTimeString();
-                    
-                    div.appendChild(header);
-                    div.appendChild(content);
-                    div.appendChild(time);
-                    
-                    if (isOwn) {
-                        const deleteBtn = document.createElement('button');
-                        deleteBtn.className = 'delete-btn';
-                        deleteBtn.textContent = '×';
-                        deleteBtn.onclick = () => deleteMessage(msg.id);
-                        div.appendChild(deleteBtn);
-                    }
+                <div class="settings-panel">
+                    <h3>Settings</h3>
+                    <label><input type="checkbox" id="soundEnabled"> Enable Sound</label>
+                    <label><input type="checkbox" id="notifyEnabled"> Enable Notifications</label>
+                    <label><input type="checkbox" id="darkTheme"> Dark Theme</label>
+                    <label><input type="checkbox" id="showReadStatus"> Show Read Status</label>
+                </div>
+            </aside>
 
-                    // Add edit button for own messages
-                    if (isOwn) {
-                        const editBtn = document.createElement('button');
-                        editBtn.className = 'edit-btn';
-                        editBtn.textContent = '✎';
-                        editBtn.onclick = () => editMessage(msg);
-                        div.appendChild(editBtn);
-                    }
+            <main class="main-content">
+                <header class="message-header">
+                    <h1>Messages</h1>
+                    <div class="controls">
+                        <select id="sortMessages">
+                            <option value="newest">Newest First</option>
+                            <option value="oldest">Oldest First</option>
+                        </select>
+                        <input type="text" id="searchInput" placeholder="Search messages...">
+                    </div>
+                </header>
 
-                    // Add reply button
-                    const replyBtn = document.createElement('button');
-                    replyBtn.className = 'reply-btn';
-                    replyBtn.textContent = '↩';
-                    replyBtn.onclick = () => replyToMessage(msg);
-                    div.appendChild(replyBtn);
+                <div id="messages" class="messages"></div>
 
-                    // Show if message is edited
-                    if (msg.is_edited) {
-                        const editedMark = document.createElement('span');
-                        editedMark.className = 'edited-mark';
-                        editedMark.textContent = ' (edited)';
-                        header.appendChild(editedMark);
-                    }
+                <form id="messageForm" class="message-form" method="POST" action="/send" enctype="multipart/form-data">
+                    <input type="hidden" name="is_group" id="isGroup" value="false">
+                    <div class="message-input-container">
+                        <input type="text" name="to" id="recipient" placeholder="To User/Group" required>
+                        <textarea name="content" placeholder="Type a message..." required></textarea>
+                        <div class="message-tools">
+                            <div class="file-upload">
+                                <input type="file" name="attachment" id="attachment">
+                                <label for="attachment">📎</label>
+                            </div>
+                            <div id="preview"></div>
+                        </div>
+                    </div>
+                    <button type="submit">Send</button>
+                </form>
+            </main>
+        </div>
 
-                    // Show replied message
-                    if (msg.reply_to) {
-                        const replyInfo = document.createElement('div');
-                        replyInfo.className = 'reply-info';
-                        const originalMsg = msgs.find(m => m.id === msg.reply_to);
-                        if (originalMsg) {
-                            replyInfo.textContent = `↪ ${originalMsg.from_user}: ${originalMsg.content.substring(0, 50)}...`;
-                            content.insertBefore(replyInfo, content.firstChild);
-                        }
-                    }
-                    
-                    // Add animation with delay
-                    setTimeout(() => {
-                        div.classList.add('show');
-                    }, index * 100);
-                    
-                    container.appendChild(div);
-                });
-            });
-            
-            if (msgs.length > lastMessageCount) {
-                notifyNewMessage();
-            }
-            lastMessageCount = msgs.length;
+        <div id="groupDialog" class="modal">
+            <div class="modal-content">
+                <h2>Create New Group</h2>
+                <div id="groupUsers"></div>
+                <button onclick="createGroup()">Create Group</button>
+                <button onclick="closeGroupDialog()">Cancel</button>
+            </div>
+        </div>
 
-            // Добавляем индикатор печатания
-            const typingUsers = document.getElementById('typingUsers');
-            typingUsers.innerHTML = '';
-            if (msgs.some(m => m.isTyping)) {
-                typingUsers.innerHTML = `<div class="typing-indicator">Typing...</div>`;
-            }
-        });
-    }
+        <div class="search-panel">
+            <input type="date" id="startDate">
+            <input type="date" id="endDate">
+            <input type="text" id="historySearch" placeholder="Search in history...">
+            <button onclick="searchHistory()">Search</button>
+        </div>
 
-    function updateOnlineUsers() {
-        fetch('/api/users/online')
-            .then(response => response.json())
-            .then(users => {
-                const container = document.getElementById('onlineUsers');
+        <div class="message-logs-panel">
+            <h3>Message Logs</h3>
+            <div class="log-filters">
+                <select id="logAction">
+                    <option value="">All Actions</option>
+                    <option value="create">Create</option>
+                    <option value="edit">Edit</option>
+                    <option value="delete">Delete</option>
+                    <option value="react">React</option>
+                </select>
+                <input type="date" id="logStartDate">
+                <input type="date" id="logEndDate">
+                <button onclick="loadMessageLogs()">Load Logs</button>
+            </div>
+            <div id="messageLogs"></div>
+        </div>
+
+        <div class="card">
+            <!-- Additional content can be added here -->
+        </div>
+
+        <footer class="site-footer">
+            © vos9/2025. All rights reserved.
+            <div class="cookie-consent">
+                This site uses cookies. By using it, you consent to our cookie policy.
+            </div>
+        </footer>
+
+        <script>
+        let lastMessageCount = 0;
+
+        function updateMessages(query = '', order = 'newest', specificMessages = null) {
+            const messages = specificMessages || fetch(`/api/messages?q=${encodeURIComponent(query)}&order=${order}`)
+                .then(response => response.json());
+                
+            Promise.resolve(messages).then(msgs => {
+                const container = document.getElementById('messages');
                 container.innerHTML = '';
-                users.forEach(user => {
-                    const div = document.createElement('div');
-                    div.className = 'user-item';
-                    if (user === '{{.CurrentUser}}') {
-                        div.innerHTML = `<strong>${user} (you)</strong>`;
-                    } else {
-                        div.innerHTML = `${user} <button onclick="setRecipient('${user}')" class="btn-small">Message</button>`;
-                    }
-                    container.appendChild(div);
+                
+                const groupedMessages = groupMessagesByDate(msgs);
+                
+                Object.entries(groupedMessages).forEach(([date, messages]) => {
+                    const dateDiv = document.createElement('div');
+                    dateDiv.className = 'message-date-separator';
+                    dateDiv.textContent = date;
+                    container.appendChild(dateDiv);
+                    
+                    messages.forEach((msg, index) => {
+                        const isOwn = msg.from_user === '{{.CurrentUser}}';
+                        const div = document.createElement('div');
+                        div.className = `message ${isOwn ? 'sent' : 'received'}`;
+                        
+                        const header = document.createElement('div');
+                        header.className = 'message-header';
+                        header.textContent = isOwn ? `To: ${msg.to_user}` : `From: ${msg.from_user}`;
+                        
+                        const content = document.createElement('div');
+                        content.className = 'message-content';
+                        content.innerHTML = msg.content; // Changed from textContent to innerHTML
+                        
+                        // Add file attachment if present
+                        if (msg.has_file) {
+                            const fileDiv = document.createElement('div');
+                            fileDiv.className = 'message-file';
+                            const ext = msg.file_name.split('.').pop().toLowerCase();
+                            
+                            switch(true) {
+                                case /^(jpg|jpeg|png|gif)$/.test(ext):
+                                    const img = document.createElement('img');
+                                    img.src = `data:image;base64,${msg.file_data}`;
+                                    img.className = 'message-image';
+                                    fileDiv.appendChild(img);
+                                    break;
+                                    
+                                case /^(mp4|webm|mov)$/.test(ext):
+                                    const video = document.createElement('video');
+                                    video.controls = true;
+                                    video.className = 'message-video';
+                                    video.src = `data:video/${ext};base64,${msg.file_data}`;
+                                    fileDiv.appendChild(video);
+                                    break;
+                                    
+                                default:
+                                    const link = document.createElement('a');
+                                    link.href = `data:application/octet-stream;base64,${msg.file_data}`;
+                                    link.download = msg.file_name;
+                                    link.textContent = `📎 ${msg.file_name}`;
+                                    fileDiv.appendChild(link);
+                            }
+                            content.appendChild(fileDiv);
+                        }
+                        
+                        const time = document.createElement('div');
+                        time.className = 'message-time';
+                        time.textContent = new Date(msg.created_at).toLocaleTimeString();
+                        
+                        div.appendChild(header);
+                        div.appendChild(content);
+                        div.appendChild(time);
+                        
+                        if (isOwn) {
+                            const deleteBtn = document.createElement('button');
+                            deleteBtn.className = 'delete-btn';
+                            deleteBtn.textContent = '×';
+                            deleteBtn.onclick = () => deleteMessage(msg.id);
+                            div.appendChild(deleteBtn);
+                        }
+
+                        // Add edit button for own messages
+                        if (isOwn) {
+                            const editBtn = document.createElement('button');
+                            editBtn.className = 'edit-btn';
+                            editBtn.textContent = '✎';
+                            editBtn.onclick = () => editMessage(msg);
+                            div.appendChild(editBtn);
+                        }
+
+                        // Add reply button
+                        const replyBtn = document.createElement('button');
+                        replyBtn.className = 'reply-btn';
+                        replyBtn.textContent = '↩';
+                        replyBtn.onclick = () => replyToMessage(msg);
+                        div.appendChild(replyBtn);
+
+                        // Show if message is edited
+                        if (msg.is_edited) {
+                            const editedMark = document.createElement('span');
+                            editedMark.className = 'edited-mark';
+                            editedMark.textContent = ' (edited)';
+                            header.appendChild(editedMark);
+                        }
+
+                        // Show replied message
+                        if (msg.reply_to) {
+                            const replyInfo = document.createElement('div');
+                            replyInfo.className = 'reply-info';
+                            const originalMsg = msgs.find(m => m.id === msg.reply_to);
+                            if (originalMsg) {
+                                replyInfo.textContent = `↪ ${originalMsg.from_user}: ${originalMsg.content.substring(0, 50)}...`;
+                                content.insertBefore(replyInfo, content.firstChild);
+                            }
+                        }
+                        
+                        // Add animation with delay
+                        setTimeout(() => {
+                            div.classList.add('show');
+                        }, index * 100);
+                        
+                        container.appendChild(div);
+                    });
                 });
+                
+                if (msgs.length > lastMessageCount) {
+                    notifyNewMessage();
+                }
+                lastMessageCount = msgs.length;
+
+                // Добавляем индикатор печатания
+                const typingUsers = document.getElementById('typingUsers');
+                typingUsers.innerHTML = '';
+                if (msgs.some(m => m.isTyping)) {
+                    typingUsers.innerHTML = `<div class="typing-indicator">Typing...</div>`;
+                }
             });
-    }
+        }
 
-    function deleteMessage(messageId) {
-        if (!confirm('Delete this message?')) return;
-        
-        fetch('/api/messages/delete', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ message_id: messageId })
-        }).then(() => updateMessages());
-    }
+        function updateOnlineUsers() {
+            fetch('/api/users/online')
+                .then(response => response.json())
+                .then(users => {
+                    const container = document.getElementById('onlineUsers');
+                    container.innerHTML = '';
+                    users.forEach(user => {
+                        const div = document.createElement('div');
+                        div.className = 'user-item';
+                        if (user === '{{.CurrentUser}}') {
+                            div.innerHTML = `<strong>${user} (you)</strong>`;
+                        } else {
+                            div.innerHTML = `${user} <button onclick="setRecipient('${user}')" class="btn-small">Message</button>`;
+                        }
+                        container.appendChild(div);
+                    });
+                });
+        }
 
-    const messageSound = new Audio('/static/notification.mp3');
+        function deleteMessage(messageId) {
+            if (!confirm('Delete this message?')) return;
+            
+            fetch('/api/messages/delete', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ message_id: messageId })
+            }).then(() => updateMessages());
+        }
 
-    function notifyNewMessage() {
-        if (!document.hidden) {
-            messageSound.play().catch(() => {});
-            if (Notification.permission === "granted") {
-                new Notification("New message received!");
+        const messageSound = new Audio('/static/notification.mp3');
+
+        function notifyNewMessage() {
+            if (!document.hidden) {
+                messageSound.play().catch(() => {});
+                if (Notification.permission === "granted") {
+                    new Notification("New message received!");
+                }
             }
         }
-    }
 
-    function setRecipient(username) {
-        document.getElementById('recipient').value = username;
-        document.getElementById('messageForm').querySelector('textarea').focus();
-    }
-
-    // Search functionality
-    const searchInput = document.getElementById('searchInput');
-    searchInput.addEventListener('input', e => updateMessages(e.target.value));
-
-    // Request notification permission
-    if (Notification.permission === "default") {
-        Notification.requestPermission();
-    }
-
-    // Initial load and periodic updates
-    updateMessages();
-    updateOnlineUsers();
-    setInterval(updateMessages, 5000);
-    setInterval(updateOnlineUsers, 10000);
-
-    function showNewGroupDialog() {
-        document.getElementById('groupDialog').style.display = 'block';
-        updateGroupUsersList();
-    }
-
-    function closeGroupDialog() {
-        document.getElementById('groupDialog').style.display = 'none';
-    }
-
-    function updateGroupUsersList() {
-        fetch('/api/users/online')
-            .then(response => response.json())
-            .then(users => {
-                const container = document.getElementById('groupUsers');
-                container.innerHTML = users
-                    .filter(user => user !== '{{.CurrentUser}}')
-                    .map(user => `
-                        <label>
-                            <input type="checkbox" value="${user}"> ${user}
-                        </label>
-                    `).join('');
-            });
-    }
-
-    function createGroup() {
-        const selected = Array.from(document.querySelectorAll('#groupUsers input:checked'))
-            .map(input => input.value);
-        
-        if (selected.length < 2) {
-            alert('Please select at least 2 users');
-            return;
+        function setRecipient(username) {
+            document.getElementById('recipient').value = username;
+            document.getElementById('messageForm').querySelector('textarea').focus();
         }
 
-        selected.push('{{.CurrentUser}}');
-        document.getElementById('isGroup').value = 'true';
-        document.getElementById('recipient').value = selected.join(',');
-        document.getElementById('messageForm').submit();
-        closeGroupDialog();
-    }
+        // Search functionality
+        const searchInput = document.getElementById('searchInput');
+        searchInput.addEventListener('input', e => updateMessages(e.target.value));
 
-    document.getElementById('sortMessages').addEventListener('change', function(e) {
-        const order = e.target.value;
-        updateMessages(document.getElementById('searchInput').value, order);
-    });
+        // Request notification permission
+        if (Notification.permission === "default") {
+            Notification.requestPermission();
+        }
 
-    // Автоматическая маркировка прочитанных сообщений
-    function markMessageAsRead(messageId) {
-        fetch('/api/messages/read', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ message_id: messageId })
+        // Initial load and periodic updates
+        updateMessages();
+        updateOnlineUsers();
+        setInterval(updateMessages, 5000);
+        setInterval(updateOnlineUsers, 10000);
+
+        function showNewGroupDialog() {
+            document.getElementById('groupDialog').style.display = 'block';
+            updateGroupUsersList();
+        }
+
+        function closeGroupDialog() {
+            document.getElementById('groupDialog').style.display = 'none';
+        }
+
+        function updateGroupUsersList() {
+            fetch('/api/users/online')
+                .then(response => response.json())
+                .then(users => {
+                    const container = document.getElementById('groupUsers');
+                    container.innerHTML = users
+                        .filter(user => user !== '{{.CurrentUser}}')
+                        .map(user => `
+                            <label>
+                                <input type="checkbox" value="${user}"> ${user}
+                            </label>
+                        `).join('');
+                });
+        }
+
+        function createGroup() {
+            const selected = Array.from(document.querySelectorAll('#groupUsers input:checked'))
+                .map(input => input.value);
+            
+            if (selected.length < 2) {
+                alert('Please select at least 2 users');
+                return;
+            }
+
+            selected.push('{{.CurrentUser}}');
+            document.getElementById('isGroup').value = 'true';
+            document.getElementById('recipient').value = selected.join(',');
+            document.getElementById('messageForm').submit();
+            closeGroupDialog();
+        }
+
+        document.getElementById('sortMessages').addEventListener('change', function(e) {
+            const order = e.target.value;
+            updateMessages(document.getElementById('searchInput').value, order);
         });
-    }
 
-    let typingTimeout;
-    const messageForm = document.getElementById('messageForm');
-    const textarea = messageForm.querySelector('textarea');
-    
-    textarea.addEventListener('input', () => {
-        clearTimeout(typingTimeout);
-        const recipient = document.getElementById('recipient').value;
+        // Автоматическая маркировка прочитанных сообщений
+        function markMessageAsRead(messageId) {
+            fetch('/api/messages/read', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ message_id: messageId })
+            });
+        }
+
+        let typingTimeout;
+        const messageForm = document.getElementById('messageForm');
+        const textarea = messageForm.querySelector('textarea');
         
-        fetch('/api/typing', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({
-                to_user: recipient,
-                is_typing: true
-            })
-        });
-        
-        typingTimeout = setTimeout(() => {
+        textarea.addEventListener('input', () => {
+            clearTimeout(typingTimeout);
+            const recipient = document.getElementById('recipient').value;
+            
             fetch('/api/typing', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({
                     to_user: recipient,
-                    is_typing: false
+                    is_typing: true
                 })
             });
-        }, 1000);
-    });
-    
-    function loadHistory(withUser) {
-        fetch(`/api/history?with=${encodeURIComponent(withUser)}`)
-            .then(response => response.json())
-            .then(messages => {
-                // Обновляем UI с историей
-                updateMessages('', 'oldest', messages);
-            });
-    }
-
-    // Quick emoji buttons
-    const emojiButtons = [
-        {text: '😊', code: ':)'},
-        {text: '😢', code: ':('},
-        {text: '😃', code: ':D'},
-        {text: '❤️', code: '<3'},
-        {text: '😛', code: ':P'}
-    ];
-
-    const emojiBar = document.createElement('div');
-    emojiBar.className = 'emoji-bar';
-    emojiButtons.forEach(emoji => {
-        const button = document.createElement('button');
-        button.innerText = emoji.text;
-        button.onclick = (e) => {
-            e.preventDefault();
-            textarea.value += emoji.code;
-            textarea.focus();
-        };
-        emojiBar.appendChild(button);
-    });
-    messageForm.insertBefore(emojiBar, messageForm.firstChild);
-
-    // File handling
-    document.getElementById('attachment').addEventListener('change', function(e) {
-        const file = e.target.files[0];
-        if (!file) return;
-
-        const preview = document.getElementById('preview');
-        preview.innerHTML = '';
-
-        if (file.type.startsWith('image/')) {
-            const img = document.createElement('img');
-            img.className = 'attachment-preview';
-            const reader = new FileReader();
-            reader.onload = e => img.src = e.target.result;
-            reader.readAsDataURL(file);
-            preview.appendChild(img);
-        } else {
-            preview.textContent = `Selected file: ${file.name}`;
-        }
-    });
-
-    // Add drag & drop functionality
-    const dropZone = document.createElement('div');
-    dropZone.className = 'drop-zone';
-    dropZone.textContent = 'Drag & drop files here or click to select';
-    dropZone.onclick = () => document.getElementById('attachment').click();
-
-    ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
-        dropZone.addEventListener(eventName, preventDefaults);
-    });
-
-    function preventDefaults(e) {
-        e.preventDefault();
-        e.stopPropagation();
-    }
-
-    ['dragenter', 'dragover'].forEach(eventName => {
-        dropZone.addEventListener(eventName, () => {
-            dropZone.classList.add('drag-over');
-        });
-    });
-
-    ['dragleave', 'drop'].forEach(eventName => {
-        dropZone.addEventListener(eventName, () => {
-            dropZone.classList.remove('drag-over');
-        });
-    });
-
-    dropZone.addEventListener('drop', e => {
-        const dt = e.dataTransfer;
-        const files = dt.files;
-        document.getElementById('attachment').files = files;
-        handleFiles(files);
-    });
-
-    function handleFiles(files) {
-        const preview = document.getElementById('preview');
-        preview.innerHTML = '';
-        
-        if (files[0].type.startsWith('image/')) {
-            const img = document.createElement('img');
-            img.className = 'attachment-preview';
-            const reader = new FileReader();
-            reader.onload = e => img.src = e.target.result;
-            reader.readAsDataURL(files[0]);
-            preview.appendChild(img);
-        } else {
-            preview.textContent = `Selected file: ${files[0].name}`;
-        }
-    }
-
-    // Add file upload zone before the message form
-    const fileUpload = document.querySelector('.file-upload');
-    fileUpload.parentNode.insertBefore(dropZone, fileUpload);
-
-    // Avatar upload
-    function updateAvatar() {
-        const input = document.createElement('input');
-        input.type = 'file';
-        input.accept = 'image/*';
-        input.onchange = e => {
-            const file = e.target.files[0];
-            if (!file) return;
-
-            const reader = new FileReader();
-            reader.onload = e => {
-                fetch('/api/avatar', {
+            
+            typingTimeout = setTimeout(() => {
+                fetch('/api/typing', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({
-                        avatar: e.target.result
+                        to_user: recipient,
+                        is_typing: false
                     })
-                }).then(() => location.reload());
+                });
+            }, 1000);
+        });
+        
+        function loadHistory(withUser) {
+            fetch(`/api/history?with=${encodeURIComponent(withUser)}`)
+                .then(response => response.json())
+                .then(messages => {
+                    // Обновляем UI с историей
+                    updateMessages('', 'oldest', messages);
+                });
+        }
+
+        // Quick emoji buttons
+        const emojiButtons = [
+            {text: '😊', code: ':)'},
+            {text: '😢', code: ':('},
+            {text: '😃', code: ':D'},
+            {text: '❤️', code: '<3'},
+            {text: '😛', code: ':P'}
+        ];
+
+        const emojiBar = document.createElement('div');
+        emojiBar.className = 'emoji-bar';
+        emojiButtons.forEach(emoji => {
+            const button = document.createElement('button');
+            button.innerText = emoji.text;
+            button.onclick = (e) => {
+                e.preventDefault();
+                textarea.value += emoji.code;
+                textarea.focus();
             };
-            reader.readAsDataURL(file);
-        };
-        input.click();
-    }
+            emojiBar.appendChild(button);
+        });
+        messageForm.insertBefore(emojiBar, messageForm.firstChild);
 
-    function editMessage(msg) {
-        const newContent = prompt('Edit message:', msg.content);
-        if (newContent && newContent !== msg.content) {
-            fetch('/api/messages/edit', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({
-                    message_id: msg.id,
-                    content: newContent
-                })
-            }).then(() => updateMessages());
-        }
-    }
+        // File handling
+        document.getElementById('attachment').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (!file) return;
 
-    function replyToMessage(msg) {
-        document.getElementById('recipient').value = msg.from_user;
-        document.querySelector('textarea').focus();
-        
-        // Store reply information
-        const form = document.getElementById('messageForm');
-        form.dataset.replyTo = msg.id;
-        
-        // Show reply preview
-        const preview = document.createElement('div');
-        preview.className = 'reply-preview';
-        preview.innerHTML = `
-            Replying to ${msg.from_user}: ${msg.content.substring(0, 50)}...
-            <button onclick="cancelReply()">×</button>
-        `;
-        form.insertBefore(preview, form.firstChild);
-    }
+            const preview = document.getElementById('preview');
+            preview.innerHTML = '';
 
-    function cancelReply() {
-        delete document.getElementById('messageForm').dataset.replyTo;
-        document.querySelector('.reply-preview')?.remove();
-    }
-
-    // Override form submission to handle replies
-    document.getElementById('messageForm').onsubmit = function(e) {
-        e.preventDefault();
-        const replyTo = this.dataset.replyTo;
-        const content = this.querySelector('textarea').value;
-        const to = this.querySelector('#recipient').value;
-
-        if (replyTo) {
-            fetch('/api/messages/reply', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({
-                    reply_to: parseInt(replyTo),
-                    content: content,
-                    to_user: to
-                })
-            }).then(() => {
-                cancelReply();
-                this.reset();
-                updateMessages();
-            });
-        } else {
-            this.submit();
-        }
-    };
-
-    function updateUserList() {
-        fetch('/api/users/online')
-            .then(response => response.json())
-            .then(users => {
-                const container = document.getElementById('onlineUsers');
-                container.innerHTML = '';
-                users.forEach(user => {
-                    const div = document.createElement('div');
-                    div.className = 'user-item';
-                    const status = user.is_online ? 
-                        '<span class="status-dot online"></span>' : 
-                        `<span class="status-dot offline" title="Last seen: ${new Date(user.last_seen).toLocaleString()}"></span>`;
-                    
-                    div.innerHTML = `
-                        ${status}
-                        ${user.username}
-                        ${user.unread_count ? `<span class="unread-badge">${user.unread_count}</span>` : ''}
-                        <button onclick="setRecipient('${user.username}')" class="btn-small">Message</button>
-                    `;
-                    container.appendChild(div);
-                });
-            });
-    }
-
-    function groupMessagesByDate(messages) {
-        const groups = {};
-        messages.forEach(msg => {
-            const date = new Date(msg.created_at).toLocaleDateString();
-            if (!groups[date]) {
-                groups[date] = [];
+            if (file.type.startsWith('image/')) {
+                const img = document.createElement('img');
+                img.className = 'attachment-preview';
+                const reader = new FileReader();
+                reader.onload = e => img.src = e.target.result;
+                reader.readAsDataURL(file);
+                preview.appendChild(img);
+            } else {
+                preview.textContent = `Selected file: ${file.name}`;
             }
-            groups[date].push(msg);
         });
-        return groups;
-    }
 
-    // Add periodic status updates
-    setInterval(() => {
-        const textarea = document.querySelector('textarea');
-        if (document.activeElement === textarea && textarea.value) {
-            fetch('/api/typing', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({
-                    is_typing: true,
-                    to_user: document.getElementById('recipient').value
-                })
-            });
+        // Add drag & drop functionality
+        const dropZone = document.createElement('div');
+        dropZone.className = 'drop-zone';
+        dropZone.textContent = 'Drag & drop files here or click to select';
+        dropZone.onclick = () => document.getElementById('attachment').click();
+
+        ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+            dropZone.addEventListener(eventName, preventDefaults);
+        });
+
+        function preventDefaults(e) {
+            e.preventDefault();
+            e.stopPropagation();
         }
-    }, 3000);
 
-    // Add auto-updating group list
-    function updateGroupList() {
-        fetch('/api/groups')
-            .then(response => response.json())
-            .then(groups => {
-                const container = document.getElementById('userGroups');
-                container.innerHTML = '';
-                groups.forEach(group => {
-                    const div = document.createElement('div');
-                    div.className = 'group-item';
-                    const members = group.join(', ');
-                    div.innerHTML = `
-                        <div class="group-info">
-                            <span class="group-members">${members}</span>
-                        </div>
-                        <button onclick="setRecipient('${group.join(',')}')" class="btn-small">Message</button>
-                    `;
-                    container.appendChild(div);
-                });
+        ['dragenter', 'dragover'].forEach(eventName => {
+            dropZone.addEventListener(eventName, () => {
+                dropZone.classList.add('drag-over');
             });
-    }
-
-    // Update groups periodically
-    setInterval(updateGroupList, 10000);
-    updateGroupList();
-
-    // Add scroll to bottom on new messages
-    function scrollToBottom() {
-        const container = document.getElementById('messages');
-        container.scrollTop = container.scrollHeight;
-    }
-
-    // Call scrollToBottom after messages update
-    const originalUpdateMessages = updateMessages;
-    updateMessages = function(...args) {
-        originalUpdateMessages.apply(this, args).then(() => {
-            scrollToBottom();
         });
-    };
 
-    // Add Markdown preview
-    let previewTimeout;
-    textarea.addEventListener('input', function() {
-        clearTimeout(previewTimeout);
-        previewTimeout = setTimeout(() => {
-            const content = this.value;
-            if (content) {
-                fetch('/api/preview', {
+        ['dragleave', 'drop'].forEach(eventName => {
+            dropZone.addEventListener(eventName, () => {
+                dropZone.classList.remove('drag-over');
+            });
+        });
+
+        dropZone.addEventListener('drop', e => {
+            const dt = e.dataTransfer;
+            const files = dt.files;
+            document.getElementById('attachment').files = files;
+            handleFiles(files);
+        });
+
+        function handleFiles(files) {
+            const preview = document.getElementById('preview');
+            preview.innerHTML = '';
+            
+            if (files[0].type.startsWith('image/')) {
+                const img = document.createElement('img');
+                img.className = 'attachment-preview';
+                const reader = new FileReader();
+                reader.onload = e => img.src = e.target.result;
+                reader.readAsDataURL(files[0]);
+                preview.appendChild(img);
+            } else {
+                preview.textContent = `Selected file: ${files[0].name}`;
+            }
+        }
+
+        // Add file upload zone before the message form
+        const fileUpload = document.querySelector('.file-upload');
+        fileUpload.parentNode.insertBefore(dropZone, fileUpload);
+
+        // Avatar upload
+        function updateAvatar() {
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = 'image/*';
+            input.onchange = e => {
+                const file = e.target.files[0];
+                if (!file) return;
+
+                const reader = new FileReader();
+                reader.onload = e => {
+                    fetch('/api/avatar', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({
+                            avatar: e.target.result
+                        })
+                    }).then(() => location.reload());
+                };
+                reader.readAsDataURL(file);
+            };
+            input.click();
+        }
+
+        function editMessage(msg) {
+            openEditMessageModal(msg);
+        }
+
+        function replyToMessage(msg) {
+            document.getElementById('recipient').value = msg.from_user;
+            document.querySelector('textarea').focus();
+            
+            // Store reply information
+            const form = document.getElementById('messageForm');
+            form.dataset.replyTo = msg.id;
+            
+            // Show reply preview
+            const preview = document.createElement('div');
+            preview.className = 'reply-preview';
+            preview.innerHTML = `
+                Replying to ${msg.from_user}: ${msg.content.substring(0, 50)}...
+                <button onclick="cancelReply()">×</button>
+            `;
+            form.insertBefore(preview, form.firstChild);
+        }
+
+        function cancelReply() {
+            delete document.getElementById('messageForm').dataset.replyTo;
+            document.querySelector('.reply-preview')?.remove();
+        }
+
+        // Override form submission to handle replies
+        document.getElementById('messageForm').onsubmit = function(e) {
+            e.preventDefault();
+            const replyTo = this.dataset.replyTo;
+            const content = this.querySelector('textarea').value;
+            const to = this.querySelector('#recipient').value;
+
+            if (replyTo) {
+                fetch('/api/messages/reply', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ content: content })
-                })
-                .then(response => response.text())
-                .then(html => {
-                    document.getElementById('preview').innerHTML = html;
+                    body: JSON.stringify({
+                        reply_to: parseInt(replyTo),
+                        content: content,
+                        to_user: to
+                    })
+                }).then(() => {
+                    cancelReply();
+                    this.reset();
+                    updateMessages();
                 });
             } else {
-                document.getElementById('preview').innerHTML = '';
+                this.submit();
             }
-        }, 300);
-    });
+        };
 
-    function toggleMarkdownHelp() {
-        const help = document.createElement('div');
-        help.className = 'markdown-help-popup';
-        help.innerHTML = `
-            <h3>Markdown Guide</h3>
-            <ul>
-                <li>**bold text**</li>
-                <li>*italic text*</li>
-                <li>\`code\`</li>
-                <li>> quote</li>
-                <li>- list item</li>
-                <li>[link](url)</li>
-                <li>![image](url)</li>
-            </ul>
-            <button onclick="this.parentElement.remove()">Close</button>
-        `;
-        document.body.appendChild(help);
-    }
-
-    function exportMessages() {
-        fetch('/api/messages/export')
-            .then(response => response.blob())
-            .then(blob => {
-                const url = window.URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = `messages_${new Date().toISOString().split('T')[0]}.json`;
-                document.body.appendChild(a);
-                a.click();
-                document.body.removeChild(a);
-                window.URL.revokeObjectURL(url);
-            });
-    }
-
-    // Добавляем поддержку drag-and-drop для всех типов файлов
-    dropZone.addEventListener('drop', e => {
-        const file = e.dataTransfer.files[0];
-        if (!file) return;
-        
-        const maxSize = file.type.startsWith('video/') ? 50 * 1024 * 1024 : 10 * 1024 * 1024;
-        if (file.size > maxSize) {
-            alert(file.type.startsWith('video/') ? 
-                'Video too large (max 50MB)' : 
-                'File too large (max 10MB)');
-            return;
+        function updateUserList() {
+            fetch('/api/users/online')
+                .then(response => response.json())
+                .then(users => {
+                    const container = document.getElementById('onlineUsers');
+                    container.innerHTML = '';
+                    users.forEach(user => {
+                        const div = document.createElement('div');
+                        div.className = 'user-item';
+                        const status = user.is_online ? 
+                            '<span class="status-dot online"></span>' : 
+                            `<span class="status-dot offline" title="Last seen: ${new Date(user.last_seen).toLocaleString()}"></span>`;
+                        
+                        div.innerHTML = `
+                            ${status}
+                            ${user.username}
+                            ${user.unread_count ? `<span class="unread-badge">${user.unread_count}</span>` : ''}
+                            <button onclick="setRecipient('${user.username}')" class="btn-small">Message</button>
+                        `;
+                        container.appendChild(div);
+                    });
+                });
         }
-        
-        handleFiles([file]);
-    });
 
-    function loadUserSettings() {
-        fetch('/api/settings')
-            .then(response => response.json())
-            .then(settings => {
-                document.getElementById('soundEnabled').checked = settings.sound_enabled;
-                document.getElementById('notifyEnabled').checked = settings.notify_enabled;
-                document.getElementById('darkTheme').checked = settings.dark_theme;
-                document.getElementById('showReadStatus').checked = settings.show_read_status;
-                
-                applyTheme(settings.dark_theme);
+        function groupMessagesByDate(messages) {
+            const groups = {};
+            messages.forEach(msg => {
+                const date = new Date(msg.created_at).toLocaleDateString();
+                if (!groups[date]) {
+                    groups[date] = [];
+                }
+                groups[date].push(msg);
             });
-    }
+            return groups;
+        }
 
-    function updateSettings(setting, value) {
-        fetch('/api/settings', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({
-                [setting]: value
-            })
+        // Add periodic status updates
+        setInterval(() => {
+            const textarea = document.querySelector('textarea');
+            if (document.activeElement === textarea && textarea.value) {
+                fetch('/api/typing', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        is_typing: true,
+                        to_user: document.getElementById('recipient').value
+                    })
+                });
+            }
+        }, 3000);
+
+        // Add auto-updating group list
+        function updateGroupList() {
+            fetch('/api/groups')
+                .then(response => response.json())
+                .then(groups => {
+                    const container = document.getElementById('userGroups');
+                    container.innerHTML = '';
+                    groups.forEach(group => {
+                        const div = document.createElement('div');
+                        div.className = 'group-item';
+                        const members = group.join(', ');
+                        div.innerHTML = `
+                            <div class="group-info">
+                                <span class="group-members">${members}</span>
+                            </div>
+                            <button onclick="setRecipient('${group.join(',')}')" class="btn-small">Message</button>
+                        `;
+                        container.appendChild(div);
+                    });
+                });
+        }
+
+        // Update groups periodically
+        setInterval(updateGroupList, 10000);
+        updateGroupList();
+
+        // Add scroll to bottom on new messages
+        function scrollToBottom() {
+            const container = document.getElementById('messages');
+            container.scrollTop = container.scrollHeight;
+        }
+
+        // Call scrollToBottom after messages update
+        const originalUpdateMessages = updateMessages;
+        updateMessages = function(...args) {
+            originalUpdateMessages.apply(this, args).then(() => {
+                scrollToBottom();
+            });
+        };
+
+        // Add Markdown preview
+        let previewTimeout;
+        textarea.addEventListener('input', function() {
+            clearTimeout(previewTimeout);
+            previewTimeout = setTimeout(() => {
+                const content = this.value;
+                if (content) {
+                    fetch('/api/preview', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ content: content })
+                    })
+                    .then(response => response.text())
+                    .then(html => {
+                        document.getElementById('preview').innerHTML = html;
+                    });
+                } else {
+                    document.getElementById('preview').innerHTML = '';
+                }
+            }, 300);
         });
-    }
 
-    function searchHistory() {
-        const startDate = document.getElementById('startDate').value;
-        const endDate = document.getElementById('endDate').value;
-        const query = document.getElementById('historySearch').value;
-        
-        fetch(`/api/messages/search?start=${startDate}&end=${endDate}&q=${encodeURIComponent(query)}`)
-            .then(response => response.json())
-            .then(messages => updateMessages('', 'oldest', messages));
-    }
+        function toggleMarkdownHelp() {
+            const help = document.createElement('div');
+            help.className = 'markdown-help-popup';
+            help.innerHTML = `
+                <h3>Markdown Guide</h3>
+                <ul>
+                    <li>**bold text**</li>
+                    <li>*italic text*</li>
+                    <li>\`code\`</li>
+                    <li>> quote</li>
+                    <li>- list item</li>
+                    <li>[link](url)</li>
+                    <li>![image](url)</li>
+                </ul>
+                <button onclick="this.parentElement.remove()">Close</button>
+            `;
+            document.body.appendChild(help);
+        }
 
-    function applyTheme(isDark) {
-        document.body.classList.toggle('dark-theme', isDark);
-    }
+        function exportMessages() {
+            fetch('/api/messages/export')
+                .then(response => response.blob())
+                .then(blob => {
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `messages_${new Date().toISOString().split('T')[0]}.json`;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    window.URL.revokeObjectURL(url);
+                });
+        }
 
-    // Event listeners for settings
-    document.getElementById('soundEnabled').onchange = e => 
-        updateSettings('sound_enabled', e.target.checked);
-    document.getElementById('notifyEnabled').onchange = e => 
-        updateSettings('notify_enabled', e.target.checked);
-    document.getElementById('darkTheme').onchange = e => {
-        updateSettings('dark_theme', e.target.checked);
-        applyTheme(e.target.checked);
-    };
-    document.getElementById('showReadStatus').onchange = e => 
-        updateSettings('show_read_status', e.target.checked);
+        // Добавляем поддержку drag-and-drop для всех типов файлов
+        dropZone.addEventListener('drop', e => {
+            const file = e.dataTransfer.files[0];
+            if (!file) return;
+            
+            const maxSize = file.type.startsWith('video/') ? 50 * 1024 * 1024 : 10 * 1024 * 1024;
+            if (file.size > maxSize) {
+                alert(file.type.startsWith('video/') ? 
+                    'Video too large (max 50MB)' : 
+                    'File too large (max 10MB)');
+                return;
+            }
+            
+            handleFiles([file]);
+        });
 
-    // Load settings on startup
-    loadUserSettings();
-    </script>
+        function loadUserSettings() {
+            fetch('/api/settings')
+                .then(response => response.json())
+                .then(settings => {
+                    document.getElementById('soundEnabled').checked = settings.sound_enabled;
+                    document.getElementById('notifyEnabled').checked = settings.notify_enabled;
+                    document.getElementById('darkTheme').checked = settings.dark_theme;
+                    document.getElementById('showReadStatus').checked = settings.show_read_status;
+                    
+                    applyTheme(settings.dark_theme);
+                });
+        }
+
+        function updateSettings(setting, value) {
+            fetch('/api/settings', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    [setting]: value
+                })
+            });
+        }
+
+        function searchHistory() {
+            const startDate = document.getElementById('startDate').value;
+            const endDate = document.getElementById('endDate').value;
+            const query = document.getElementById('historySearch').value;
+            
+            fetch(`/api/messages/search?start=${startDate}&end=${endDate}&q=${encodeURIComponent(query)}`)
+                .then(response => response.json())
+                .then(messages => updateMessages('', 'oldest', messages));
+        }
+
+        function applyTheme(isDark) {
+            document.body.classList.toggle('dark-theme', isDark);
+        }
+
+        // Event listeners for settings
+        document.getElementById('soundEnabled').onchange = e => 
+            updateSettings('sound_enabled', e.target.checked);
+        document.getElementById('notifyEnabled').onchange = e => 
+            updateSettings('notify_enabled', e.target.checked);
+        document.getElementById('darkTheme').onchange = e => {
+            updateSettings('dark_theme', e.target.checked);
+            applyTheme(e.target.checked);
+        };
+        document.getElementById('showReadStatus').onchange = e => 
+            updateSettings('show_read_status', e.target.checked);
+
+        // Load settings on startup
+        loadUserSettings();
+
+        function updateNotifications() {
+            fetch('/api/notifications')
+                .then(response => response.json())
+                .then(notifications => {
+                    const container = document.getElementById('notifications-list');
+                    container.innerHTML = notifications.map(n => `
+                        <div class="notification ${n.read ? 'read' : 'unread'}">
+                            <span class="notification-message">${n.message}</span>
+                            <span class="notification-time">
+                                ${new Date(n.created_at).toLocaleString()}
+                            </span>
+                        </div>
+                    `).join('');
+                });
+        }
+
+        function markAllNotificationsRead() {
+            fetch('/api/notifications?action=mark_all_read', { method: 'POST' })
+                .then(() => updateNotifications());
+        }
+
+        function clearAllNotifications() {
+            fetch('/api/notifications?action=clear_all', { method: 'POST' })
+                .then(() => updateNotifications());
+        }
+
+        // Обновляем уведомления каждые 30 секунд
+        setInterval(updateNotifications, 30000);
+        updateNotifications();
+
+        function loadMessageLogs() {
+            const action = document.getElementById('logAction').value;
+            const start = document.getElementById('logStartDate').value;
+            const end = document.getElementById('logEndDate').value;
+            
+            fetch(`/api/messages/logs?action=${action}&start=${start}&end=${end}`)
+                .then(response => response.json())
+                .then(logs => {
+                    const container = document.getElementById('messageLogs');
+                    container.innerHTML = logs.map(log => `
+                        <div class="log-entry">
+                            <span class="log-time">${new Date(log.timestamp).toLocaleString()}</span>
+                            <span class="log-action">${log.action}</span>
+                            <span class="log-user">${log.user_id}</span>
+                            <span class="log-details">${log.details}</span>
+                        </div>
+                    `).join('');
+                });
+        }
+
+        let editingMessageId = null;
+
+        function openEditMessageModal(message) {
+            editingMessageId = message.id;
+            document.getElementById('editMessageContent').value = message.content;
+            document.getElementById('editMessageModal').style.display = 'flex';
+        }
+
+        function closeEditMessageModal() {
+            editingMessageId = null;
+            document.getElementById('editMessageModal').style.display = 'none';
+        }
+
+        function saveEditedMessage() {
+            const newContent = document.getElementById('editMessageContent').value;
+            if (newContent && editingMessageId) {
+                fetch('/api/messages/edit', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        message_id: editingMessageId,
+                        content: newContent
+                    })
+                }).then(() => {
+                    closeEditMessageModal();
+                    updateMessages();
+                });
+            }
+        }
+
+        function editMessage(msg) {
+            openEditMessageModal(msg);
+        }
+        </script>
+
+        <!-- Edit Message Modal -->
+        <div id="editMessageModal" class="edit-message-modal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2>Edit Message</h2>
+                    <button class="close-btn" onclick="closeEditMessageModal()">×</button>
+                </div>
+                <div class="modal-body">
+                    <textarea id="editMessageContent"></textarea>
+                </div>
+                <div class="modal-footer">
+                    <button class="cancel-btn" onclick="closeEditMessageModal()">Cancel</button>
+                    <button class="save-btn" onclick="saveEditedMessage()">Save</button>
+                </div>
+            </div>
+        </div>
+    </div>
 </body>
 </html>

@@ -48,6 +48,22 @@ func (s *NotificationService) Add(userId string, notifType string, message strin
 	s.triggerWebhooks(notif)
 }
 
+func (s *NotificationService) AddGroupNotification(groupUsers []string, message string) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	for _, userId := range groupUsers {
+		notif := Notification{
+			ID:        len(s.notifications[userId]) + 1,
+			UserID:    userId,
+			Type:      "group_message",
+			Message:   message,
+			CreatedAt: time.Now(),
+		}
+		s.notifications[userId] = append(s.notifications[userId], notif)
+	}
+}
+
 func (s *NotificationService) GetUnread(userId string) []Notification {
 	s.mutex.RLock()
 	defer s.mutex.RUnlock()
@@ -59,6 +75,19 @@ func (s *NotificationService) GetUnread(userId string) []Notification {
 		}
 	}
 	return unread
+}
+
+func (s *NotificationService) GetGroupNotifications(userId string) []Notification {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+
+	var notifications []Notification
+	for _, n := range s.notifications[userId] {
+		if n.Type == "group_message" {
+			notifications = append(notifications, n)
+		}
+	}
+	return notifications
 }
 
 func (s *NotificationService) MarkRead(userId string, notifId int) {
@@ -88,4 +117,25 @@ func (s *NotificationService) triggerWebhooks(notif Notification) {
 			log.Printf("Webhook triggered: %s, data: %s", url, string(data))
 		}
 	}()
+}
+
+// Добавляем новые методы в NotificationService
+func (s *NotificationService) GetAllByUser(userId string) []Notification {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+	return s.notifications[userId]
+}
+
+func (s *NotificationService) ClearAll(userId string) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	delete(s.notifications, userId)
+}
+
+func (s *NotificationService) MarkAllRead(userId string) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	for i := range s.notifications[userId] {
+		s.notifications[userId][i].Read = true
+	}
 }
