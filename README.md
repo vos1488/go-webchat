@@ -50,7 +50,7 @@ This is a web application built with Go, featuring user authentication, messagin
 1. **Clone the repository / Клонируйте репозиторий**:
     ```sh
     git clone https://github.com/vos1488/go-webchat.git
-    cd go-web-app
+    cd go-webchat
     ```
 
 2. **Install dependencies / Установите зависимости**:
