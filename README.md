@@ -7,7 +7,6 @@ This is a web application built with Go, featuring user authentication, messagin
 ## Project Structure / Структура проекта
 
 ```
-/e:/src/go/
 ├── handlers.go         # HTTP handlers for various routes / HTTP обработчики для различных маршрутов
 ├── main.go             # Main entry point of the application / Главная точка входа в приложение
 ├── models.go           # Data models and related functions / Модели данных и связанные функции
